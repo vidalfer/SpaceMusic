@@ -1,0 +1,17 @@
+# Backend Requirements for Gesture-Flow DJ
+fastapi
+uvicorn[standard]
+python-dotenv
+google-genai
+websockets
+pydantic
+httpx
+python-multipart
+aiofiles
+
+# Multiplayer Tracking (YOLO + MediaPipe)
+ultralytics>=8.0.0        # YOLOv8 with ByteTrack
+mediapipe>=0.10.0         # Hand landmark detection
+opencv-python>=4.8.0      # Image processing
+numpy>=1.24.0             # Array operations
+pillow>=10.0.0            # Image encoding/decoding
