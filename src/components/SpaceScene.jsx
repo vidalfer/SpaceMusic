@@ -21,6 +21,16 @@ function SpaceScene({
   toggleOrbActive,
   isTracking,
   weightedPrompts,
+  sceneMode = 'solar',
+  galaxies = [],
+  currentGalaxyId,
+  onSelectGalaxy,
+  constellationStars = [],
+  constellations = [],
+  constellationDrafts = {},
+  onStarConnect,
+  onConstellationEnd,
+  blackHoles = [],
   getCameraMode,
   // Legacy props
   handPosition,
@@ -82,7 +92,12 @@ function SpaceScene({
       cameraAngleRef.current.phi = Math.max(0.3, Math.min(Math.PI - 0.3, cameraAngleRef.current.phi))
     }
     
+<<<<<<< Updated upstream
     // Calculate camera position
+=======
+    const targetRadius = sceneMode === 'galaxyMap' ? 44 : 22
+    cameraRadiusRef.current += (targetRadius - cameraRadiusRef.current) * 0.06
+>>>>>>> Stashed changes
     const radius = cameraRadiusRef.current
     const theta = cameraAngleRef.current.theta
     const phi = cameraAngleRef.current.phi
@@ -140,6 +155,7 @@ function SpaceScene({
     return closest
   }, [orbs, camera])
 
+<<<<<<< Updated upstream
   // LOCK SYSTEM: Prevents selecting wrong planet when pinching
   // When cursor hovers over a planet for LOCK_TIME, it becomes "locked"
   // Only the locked planet can be grabbed until cursor moves away
@@ -147,6 +163,33 @@ function SpaceScene({
   const lockedOrbRef = useRef(null)        // Currently locked planet ID
   const lockCandidateRef = useRef(null)    // Planet being considered for lock
   const lockStartTimeRef = useRef(0)       // When we started hovering over candidate
+=======
+  const getClosestGalaxyForHand = useCallback((handPos) => {
+    let closest = null
+    let minDist = Infinity
+    galaxies.forEach(galaxy => {
+      const galaxyPos = new THREE.Vector3(...galaxy.position)
+      const projected = galaxyPos.clone().project(camera)
+      const screenX = (projected.x + 1) / 2
+      const screenY = (projected.y + 1) / 2
+      const dx = handPos.x - screenX
+      const dy = handPos.y - screenY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const selectionThreshold = 0.14
+      if (dist < minDist && dist < selectionThreshold) {
+        minDist = dist
+        closest = galaxy.id
+      }
+    })
+    return closest
+  }, [galaxies, camera])
+
+  // LOCK SYSTEM
+  const LOCK_TIME = 100 // REDUZIDO: trava mais rápido (era 120ms)
+  const lockedOrbRef = useRef(null)
+  const lockCandidateRef = useRef(null)
+  const lockStartTimeRef = useRef(0)
+>>>>>>> Stashed changes
   
   // Legacy: single player closest orb
   const closestOrbRef = useRef(null)
@@ -245,6 +288,74 @@ function SpaceScene({
 
   // The center is always at origin
   const centerPosition = useMemo(() => new THREE.Vector3(0, 0, 0), [])
+  const starMap = useMemo(() => {
+    const map = {}
+    constellationStars.forEach(star => {
+      map[star.id] = new THREE.Vector3(...star.position)
+    })
+    return map
+  }, [constellationStars])
+
+  const pinchStateRef = useRef({})
+  const lastStarRef = useRef({})
+  const lastGalaxySelectRef = useRef(0)
+
+  const getClosestStarForHand = useCallback((handPos) => {
+    let closest = null
+    let minDist = Infinity
+    constellationStars.forEach(star => {
+      const starPos = starMap[star.id]
+      if (!starPos) return
+      const projected = starPos.clone().project(camera)
+      const screenX = (projected.x + 1) / 2
+      const screenY = (projected.y + 1) / 2
+      const dx = handPos.x - screenX
+      const dy = handPos.y - screenY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const selectionThreshold = 0.08
+      if (dist < minDist && dist < selectionThreshold) {
+        minDist = dist
+        closest = star.id
+      }
+    })
+    return closest
+  }, [constellationStars, starMap, camera])
+
+  useFrame(() => {
+    if (sceneMode === 'galaxyMap') {
+      players.forEach(player => {
+        player.hands.forEach(hand => {
+          if (!hand.isPinching) return
+          const now = performance.now()
+          if (now - lastGalaxySelectRef.current < 800) return
+          const galaxyId = getClosestGalaxyForHand(hand.position)
+          if (galaxyId) {
+            onSelectGalaxy?.(galaxyId)
+            lastGalaxySelectRef.current = now
+          }
+        })
+      })
+      return
+    }
+    if (!isTracking || !onStarConnect || !onConstellationEnd) return
+    players.forEach(player => {
+      player.hands.forEach((hand, index) => {
+        const key = `${player.id}_${index}`
+        const wasPinching = pinchStateRef.current[key]
+        if (hand.isPinching) {
+          const closestStar = getClosestStarForHand(hand.position)
+          if (closestStar && lastStarRef.current[key] !== closestStar) {
+            onStarConnect(player.id, closestStar)
+            lastStarRef.current[key] = closestStar
+          }
+        } else if (wasPinching) {
+          onConstellationEnd(player.id)
+          lastStarRef.current[key] = null
+        }
+        pinchStateRef.current[key] = hand.isPinching
+      })
+    })
+  })
 
   return (
     <>
@@ -286,6 +397,7 @@ function SpaceScene({
 
       {/* Ambient space lighting */}
       <ambientLight intensity={0.08} />
+<<<<<<< Updated upstream
       
       {/* The Sun - center of our musical solar system */}
       <Sun weightedPrompts={weightedPrompts} />
@@ -320,9 +432,55 @@ function SpaceScene({
             cameraMode={cameraMode}
             playerId={'player_0'}
             playerColor={'#00ffaa'}
+=======
+      {sceneMode === 'solar' ? (
+        <>
+          <Sun weightedPrompts={weightedPrompts} />
+          <OrbitalPaths orbs={orbs} />
+          <ConnectionBeams orbs={orbs} weightedPrompts={weightedPrompts} center={centerPosition} />
+          <ConstellationLayer
+            stars={constellationStars}
+            constellations={constellations}
+            drafts={constellationDrafts}
+            players={players}
+            starMap={starMap}
+>>>>>>> Stashed changes
           />
-        )
-      })}
+          <BlackHoles holes={blackHoles} />
+          {orbs.map((orb) => {
+            const weightData = weightedPrompts.find(w => w.orbId === orb.id)
+            const weight = weightData?.weight || 0
+            
+            return (
+              <SoundOrb
+                key={orb.id}
+                orb={orb}
+                grabbedOrbId={grabbedOrbId}
+                lockedOrbRef={lockedOrbRef}
+                lockCandidateRef={lockCandidateRef}
+                setGrabbedOrbId={setGrabbedOrbId}
+                updateOrbPosition={updateOrbPosition}
+                toggleOrbActive={toggleOrbActive}
+                registerOrbPosition={registerOrbPosition}
+                handPosition={handPosition}
+                camera={camera}
+                isPinching={isPinching}
+                isTracking={isTracking}
+                weight={weight}
+                cameraMode={cameraMode}
+                playerId={'player_0'}
+                playerColor={'#00ffaa'}
+              />
+            )
+          })}
+        </>
+      ) : (
+        <GalaxyMap
+          galaxies={galaxies}
+          currentGalaxyId={currentGalaxyId}
+          onSelectGalaxy={onSelectGalaxy}
+        />
+      )}
 
       {/* Multiplayer cursors - one per hand per player */}
       {players.map(player => 
@@ -361,10 +519,115 @@ function SpaceScene({
   )
 }
 
+<<<<<<< Updated upstream
 /**
  * The Sun - Central star of our musical solar system
  * Intensity reflects total musical influence
  */
+=======
+function GalaxyMap({ galaxies, currentGalaxyId, onSelectGalaxy }) {
+  return (
+    <group>
+      {galaxies.map(galaxy => {
+        const isCurrent = galaxy.id === currentGalaxyId
+        return (
+          <group key={galaxy.id} position={galaxy.position}>
+            <mesh onClick={() => onSelectGalaxy?.(galaxy.id)}>
+              <sphereGeometry args={[isCurrent ? 1.2 : 0.9, 24, 24]} />
+              <meshStandardMaterial color={galaxy.color} emissive={galaxy.color} emissiveIntensity={isCurrent ? 1.2 : 0.6} />
+            </mesh>
+            <mesh>
+              <sphereGeometry args={[isCurrent ? 1.6 : 1.2, 32, 32]} />
+              <meshBasicMaterial color={galaxy.color} transparent opacity={0.15} side={THREE.BackSide} />
+            </mesh>
+            <Text position={[0, 1.8, 0]} fontSize={0.35} color="#ffffff" anchorX="center" anchorY="bottom">
+              {galaxy.name}
+            </Text>
+            <Text position={[0, 1.35, 0]} fontSize={0.22} color="#9fb3ff" anchorX="center" anchorY="top">
+              {galaxy.mood}
+            </Text>
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
+function ConstellationLayer({ stars, constellations, drafts, players, starMap }) {
+  const getPlayerColor = (playerId) => {
+    const player = players.find(p => p.id === playerId)
+    return player?.color || '#ffffff'
+  }
+  return (
+    <group>
+      {stars.map(star => (
+        <mesh key={star.id} position={star.position}>
+          <sphereGeometry args={[0.06, 12, 12]} />
+          <meshBasicMaterial color="#ffffff" />
+        </mesh>
+      ))}
+      {constellations.map(constellation => (
+        <group key={constellation.id}>
+          {constellation.edges.map((edge, index) => {
+            const start = starMap[edge[0]]
+            const end = starMap[edge[1]]
+            if (!start || !end) return null
+            return (
+              <line key={`${constellation.id}_${index}`}>
+                <bufferGeometry>
+                  <bufferAttribute attach="attributes-position" count={2} array={new Float32Array([...start.toArray(), ...end.toArray()])} itemSize={3} />
+                </bufferGeometry>
+                <lineBasicMaterial color={getPlayerColor(constellation.ownerId)} transparent opacity={0.5} />
+              </line>
+            )
+          })}
+        </group>
+      ))}
+      {Object.entries(drafts).map(([playerId, draft]) => {
+        if (!draft.points || draft.points.length < 2) return null
+        const color = getPlayerColor(playerId)
+        return (
+          <group key={`draft_${playerId}`}>
+            {draft.points.slice(1).map((point, index) => {
+              const start = starMap[draft.points[index]]
+              const end = starMap[point]
+              if (!start || !end) return null
+              return (
+                <line key={`${playerId}_${index}`}>
+                  <bufferGeometry>
+                    <bufferAttribute attach="attributes-position" count={2} array={new Float32Array([...start.toArray(), ...end.toArray()])} itemSize={3} />
+                  </bufferGeometry>
+                  <lineBasicMaterial color={color} transparent opacity={0.35} />
+                </line>
+              )
+            })}
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
+function BlackHoles({ holes }) {
+  return (
+    <group>
+      {holes.map(hole => (
+        <group key={hole.id} position={hole.position}>
+          <mesh>
+            <sphereGeometry args={[hole.radius * 0.5, 24, 24]} />
+            <meshBasicMaterial color="#050505" />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[hole.radius, 32, 32]} />
+            <meshBasicMaterial color="#220022" transparent opacity={0.2} side={THREE.BackSide} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+>>>>>>> Stashed changes
 function Sun({ weightedPrompts }) {
   const sunRef = useRef()
   const coronaRef = useRef()

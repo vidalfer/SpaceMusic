@@ -10,6 +10,14 @@ function SpaceUI({
   weightedPrompts,
   averageInfluence,
   totalInfluence,
+  sceneMode,
+  galaxies = [],
+  currentGalaxyId,
+  onSelectGalaxy,
+  onToggleSceneMode,
+  constellations = [],
+  constellationDrafts = {},
+  blackHoleImpact = 0,
   isTracking,
   isPinching,
   isFist,
@@ -61,6 +69,36 @@ function SpaceUI({
 
       {/* Left Panel */}
       <div className="left-panel">
+        <div className="panel-section">
+          <h3>🌌 Galáxias</h3>
+          <div className="galaxy-status">
+            <div className="galaxy-name">
+              {galaxies.find(g => g.id === currentGalaxyId)?.name || 'Desconhecida'}
+            </div>
+            <div className="galaxy-mood">
+              {galaxies.find(g => g.id === currentGalaxyId)?.mood || ''}
+            </div>
+          </div>
+          <button
+            className={`galaxy-toggle ${sceneMode === 'galaxyMap' ? 'active' : ''}`}
+            onClick={onToggleSceneMode}
+          >
+            {sceneMode === 'galaxyMap' ? '🔭 VOLTAR AO SISTEMA' : '🗺️ ABRIR MAPA'}
+          </button>
+          <div className="galaxy-list">
+            {galaxies.map(galaxy => (
+              <button
+                key={galaxy.id}
+                className={`galaxy-item ${galaxy.id === currentGalaxyId ? 'active' : ''}`}
+                onClick={() => onSelectGalaxy?.(galaxy.id)}
+              >
+                <span className="galaxy-dot" style={{ background: galaxy.color }} />
+                <span className="galaxy-label">{galaxy.name}</span>
+                <span className="galaxy-tag">{galaxy.mood}</span>
+              </button>
+            ))}
+          </div>
+        </div>
         {/* Multiplayer Toggle */}
         <div className="panel-section">
           <h3>👥 Mode</h3>
@@ -111,6 +149,7 @@ function SpaceUI({
             <li><strong>✊ Fist</strong> → Orbit camera</li>
             <li><strong>🖐️ Hand close</strong> → Push to Sun</li>
             <li><strong>🖐️ Hand far</strong> → Pull to outer orbit</li>
+            <li><strong>🧭 Depth near/far</strong> → Zoom map</li>
           </ul>
           <div className="camera-hint">
             {isMultiplayer 
@@ -163,6 +202,26 @@ function SpaceUI({
             totalInfluence={totalInfluence}
             orbCount={weightedPrompts.length}
           />
+        </div>
+
+        <div className="panel-section">
+          <h3>✨ Constelações</h3>
+          <div className="constellation-row">
+            <span className="constellation-label">Criadas</span>
+            <span className="constellation-value">{constellations.length}</span>
+          </div>
+          <div className="constellation-row">
+            <span className="constellation-label">Em desenho</span>
+            <span className="constellation-value">{Object.keys(constellationDrafts).length}</span>
+          </div>
+        </div>
+
+        <div className="panel-section">
+          <h3>🕳️ Buracos Negros</h3>
+          <div className={`blackhole-indicator ${blackHoleImpact > 0.15 ? 'active' : ''}`}>
+            <span className="blackhole-label">{blackHoleImpact > 0.15 ? 'Drop ativo' : 'Estável'}</span>
+            <span className="blackhole-value">{Math.round(blackHoleImpact * 100)}%</span>
+          </div>
         </div>
       </div>
 

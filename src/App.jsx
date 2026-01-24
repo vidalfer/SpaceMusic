@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, Suspense, useCallback, useMemo, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
 import SpaceScene from './components/SpaceScene'
 import SpaceUI from './components/SpaceUI'
@@ -137,6 +137,86 @@ function App() {
       active: true 
     },
   ])
+
+  const galaxies = useMemo(() => ([
+    {
+      id: 'milky_way',
+      name: 'Via Láctea',
+      mood: 'EDM/Eletrônico',
+      position: [0, 0, 0],
+      color: '#5cc8ff',
+      prompts: [
+        { text: 'edm, electronic, festival energy, punchy drums, bright synths', weight: 1.0 },
+        { text: 'driving groove, sidechain pump, futuristic textures', weight: 0.7 }
+      ],
+      config: { bpm: 126, guidance: 4.0, density: 0.65, brightness: 0.7 }
+    },
+    {
+      id: 'andromeda',
+      name: 'Andrômeda',
+      mood: 'Jazz/Neo Soul',
+      position: [9, 2, -6],
+      color: '#f3c4ff',
+      prompts: [
+        { text: 'neo soul, jazz harmony, warm keys, expressive chords', weight: 1.0 },
+        { text: 'swing feel, brushed drums, smooth bassline', weight: 0.7 }
+      ],
+      config: { bpm: 92, guidance: 3.8, density: 0.45, brightness: 0.55 }
+    },
+    {
+      id: 'orion_nebula',
+      name: 'Nebulosa de Órion',
+      mood: 'Ambient/Chill',
+      position: [-8, -1, -5],
+      color: '#6fe4d6',
+      prompts: [
+        { text: 'ambient, chill, airy pads, slow motion textures', weight: 1.0 },
+        { text: 'soft pulses, distant echoes, calm atmosphere', weight: 0.6 }
+      ],
+      config: { bpm: 74, guidance: 4.5, density: 0.35, brightness: 0.45 }
+    },
+    {
+      id: 'crab_nebula',
+      name: 'Nebulosa do Caranguejo',
+      mood: 'Rock/Industrial',
+      position: [6, -2, 8],
+      color: '#ff9a68',
+      prompts: [
+        { text: 'industrial rock, heavy guitars, gritty textures, aggressive rhythm', weight: 1.0 },
+        { text: 'distorted drums, metallic ambience, raw energy', weight: 0.7 }
+      ],
+      config: { bpm: 138, guidance: 4.2, density: 0.75, brightness: 0.55 }
+    }
+  ]), [])
+
+  const blackHoles = useMemo(() => ([
+    { id: 'bh_core', position: [0, 0, 0], radius: 1.4 },
+    { id: 'bh_outer', position: [6, 0, -3], radius: 1.1 }
+  ]), [])
+
+  const constellationStars = useMemo(() => ([
+    { id: 's1', position: [-3.2, 2.4, 1.2] },
+    { id: 's2', position: [-1.8, 1.4, -0.6] },
+    { id: 's3', position: [-0.2, 2.1, -1.8] },
+    { id: 's4', position: [1.4, 2.6, -0.9] },
+    { id: 's5', position: [2.8, 1.5, 0.4] },
+    { id: 's6', position: [0.6, 0.4, 1.6] },
+    { id: 's7', position: [-1.4, 0.2, 1.2] },
+    { id: 's8', position: [3.6, 0.6, -1.6] },
+    { id: 's9', position: [4.2, -0.4, 0.8] },
+    { id: 's10', position: [-4.1, -0.8, -0.2] },
+    { id: 's11', position: [-2.6, -1.6, 1.8] },
+    { id: 's12', position: [1.9, -1.4, -2.2] }
+  ]), [])
+
+  const [sceneMode, setSceneMode] = useState('solar')
+  const [currentGalaxyId, setCurrentGalaxyId] = useState('milky_way')
+  const [galaxyTransition, setGalaxyTransition] = useState(null)
+  const [transitionProgress, setTransitionProgress] = useState(1)
+  const [constellations, setConstellations] = useState([])
+  const [constellationDrafts, setConstellationDrafts] = useState({})
+  const lastSceneSwitchRef = useRef(0)
+  const starLocksRef = useRef({})
 
   // Track which orb is being dragged (per player in multiplayer)
   const [grabbedOrbs, setGrabbedOrbs] = useState({}) // { playerId: orbId }
@@ -287,8 +367,133 @@ function App() {
     })
   }, [orbs])
 
+  const getGalaxyById = useCallback((id) => {
+    return galaxies.find(galaxy => galaxy.id === id)
+  }, [galaxies])
+
+  const selectGalaxy = useCallback((galaxyId) => {
+    if (!galaxyId || galaxyId === currentGalaxyId) return
+    const fromGalaxy = getGalaxyById(currentGalaxyId)
+    const toGalaxy = getGalaxyById(galaxyId)
+    if (!toGalaxy) return
+    setGalaxyTransition({
+      fromId: fromGalaxy?.id || currentGalaxyId,
+      toId: galaxyId,
+      start: performance.now(),
+      duration: 3200
+    })
+    setTransitionProgress(0)
+    setCurrentGalaxyId(galaxyId)
+    if (toGalaxy?.config) {
+      setConfig(toGalaxy.config)
+    }
+  }, [currentGalaxyId, getGalaxyById])
+
+  useEffect(() => {
+    if (!galaxyTransition) return
+    let frame
+    const tick = () => {
+      const now = performance.now()
+      const t = Math.min(1, (now - galaxyTransition.start) / galaxyTransition.duration)
+      setTransitionProgress(t)
+      if (t < 1) {
+        frame = requestAnimationFrame(tick)
+      } else {
+        setGalaxyTransition(null)
+      }
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [galaxyTransition])
+
   // Memoized weights
   const weightedPrompts = useMemo(() => calculateWeights(), [calculateWeights])
+
+  const baseGalaxyPrompts = useMemo(() => {
+    const currentGalaxy = getGalaxyById(currentGalaxyId)
+    if (!currentGalaxy) return []
+    if (!galaxyTransition) {
+      return currentGalaxy.prompts.map(p => ({ ...p, galaxyId: currentGalaxyId }))
+    }
+    const fromGalaxy = getGalaxyById(galaxyTransition.fromId)
+    const toGalaxy = getGalaxyById(galaxyTransition.toId)
+    const fromPrompts = fromGalaxy?.prompts || []
+    const toPrompts = toGalaxy?.prompts || []
+    const fromWeight = 1 - transitionProgress
+    const toWeight = transitionProgress
+    return [
+      ...fromPrompts.map(p => ({ ...p, weight: (p.weight ?? 1) * fromWeight, galaxyId: fromGalaxy?.id })),
+      ...toPrompts.map(p => ({ ...p, weight: (p.weight ?? 1) * toWeight, galaxyId: toGalaxy?.id }))
+    ]
+  }, [currentGalaxyId, galaxyTransition, transitionProgress, getGalaxyById])
+
+  const constellationPrompts = useMemo(() => {
+    return constellations.map(c => ({
+      text: c.prompt,
+      weight: c.weight,
+      constellationId: c.id
+    }))
+  }, [constellations])
+
+  const blackHoleImpact = useMemo(() => {
+    let maxStrength = 0
+    const sources = []
+    orbs.forEach(orb => sources.push({ position: orb.position }))
+    players.forEach(player => {
+      player.hands.forEach(hand => {
+        sources.push({ position: [hand.position.x * 16 - 8, (hand.position.y - 0.5) * 6, (hand.position.z - 0.5) * 6] })
+      })
+    })
+    blackHoles.forEach(hole => {
+      sources.forEach(src => {
+        const dx = src.position[0] - hole.position[0]
+        const dy = src.position[1] - hole.position[1]
+        const dz = src.position[2] - hole.position[2]
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        if (dist < hole.radius) {
+          const strength = 1 - dist / hole.radius
+          if (strength > maxStrength) maxStrength = strength
+        }
+      })
+    })
+    return maxStrength
+  }, [blackHoles, orbs, players])
+
+  const combinedPrompts = useMemo(() => {
+    const dropMultiplier = 1 - blackHoleImpact * 0.75
+    return [
+      ...baseGalaxyPrompts.map(p => ({ ...p, weight: (p.weight ?? 1) * dropMultiplier })),
+      ...weightedPrompts.map(p => ({ ...p, weight: p.weight * dropMultiplier })),
+      ...constellationPrompts.map(p => ({ ...p, weight: p.weight * dropMultiplier }))
+    ]
+  }, [baseGalaxyPrompts, weightedPrompts, constellationPrompts, blackHoleImpact])
+
+  const effectiveConfig = useMemo(() => {
+    if (!galaxyTransition) return config
+    const fromGalaxy = getGalaxyById(galaxyTransition.fromId)
+    const toGalaxy = getGalaxyById(galaxyTransition.toId)
+    const fromConfig = fromGalaxy?.config || config
+    const toConfig = toGalaxy?.config || config
+    const t = transitionProgress
+    const lerp = (a, b) => a + (b - a) * t
+    return {
+      bpm: Math.round(lerp(fromConfig.bpm, toConfig.bpm)),
+      guidance: lerp(fromConfig.guidance, toConfig.guidance),
+      density: lerp(fromConfig.density, toConfig.density),
+      brightness: lerp(fromConfig.brightness, toConfig.brightness)
+    }
+  }, [galaxyTransition, transitionProgress, getGalaxyById, config])
+
+  const dynamicConfig = useMemo(() => {
+    if (blackHoleImpact <= 0) return effectiveConfig
+    const drop = blackHoleImpact
+    return {
+      bpm: Math.max(50, Math.round(effectiveConfig.bpm * (1 - drop * 0.2))),
+      guidance: Math.max(0.5, effectiveConfig.guidance * (1 - drop * 0.6)),
+      density: Math.max(0.05, effectiveConfig.density * (1 - drop * 0.85)),
+      brightness: Math.max(0.05, effectiveConfig.brightness * (1 - drop * 0.7))
+    }
+  }, [effectiveConfig, blackHoleImpact])
 
   // Calculate average influence level for UI
   const averageInfluence = useMemo(() => {
@@ -322,10 +527,16 @@ function App() {
 
   // Send prompts to Lyria when weights change
   useEffect(() => {
-    if (lyriaAudio.isConnected && lyriaAudio.isPlaying && weightedPrompts.length > 0) {
-      lyriaAudio.setPrompts(weightedPrompts)
+    if (lyriaAudio.isConnected && lyriaAudio.isPlaying && combinedPrompts.length > 0) {
+      lyriaAudio.setPrompts(combinedPrompts)
     }
-  }, [weightedPrompts, lyriaAudio.isConnected, lyriaAudio.isPlaying])
+  }, [combinedPrompts, lyriaAudio.isConnected, lyriaAudio.isPlaying])
+
+  useEffect(() => {
+    if (lyriaAudio.isConnected && lyriaAudio.isPlaying) {
+      lyriaAudio.setConfig(dynamicConfig)
+    }
+  }, [dynamicConfig, lyriaAudio.isConnected, lyriaAudio.isPlaying])
 
   // Initialize tracking (single or multiplayer)
   const startTracking = async () => {
@@ -362,6 +573,19 @@ function App() {
   }, [isMultiplayer]) // Re-init when mode changes
 
   useEffect(() => {
+    const now = performance.now()
+    if (!isTracking) return
+    if (now - lastSceneSwitchRef.current < 900) return
+    if (sceneMode === 'solar' && !isPinching && !isFist && handPosition.z > 0.88) {
+      setSceneMode('galaxyMap')
+      lastSceneSwitchRef.current = now
+    } else if (sceneMode === 'galaxyMap' && !isPinching && !isFist && handPosition.z < 0.25) {
+      setSceneMode('solar')
+      lastSceneSwitchRef.current = now
+    }
+  }, [sceneMode, isTracking, isPinching, isFist, handPosition])
+
+  useEffect(() => {
     if (isInitialized && appState === 'loading') {
       setTimeout(() => setAppState('ready'), 300)
     }
@@ -372,9 +596,9 @@ function App() {
     if (!lyriaAudio.isConnected) {
       await lyriaAudio.connect()
     }
-    lyriaAudio.setConfig(config)
-    if (weightedPrompts.length > 0) {
-      lyriaAudio.setPrompts(weightedPrompts)
+    lyriaAudio.setConfig(dynamicConfig)
+    if (combinedPrompts.length > 0) {
+      lyriaAudio.setPrompts(combinedPrompts)
     }
     lyriaAudio.play()
   }
@@ -387,6 +611,54 @@ function App() {
   const grabbedOrb = useMemo(() => {
     return orbs.find(o => o.id === grabbedOrbId) || null
   }, [orbs, grabbedOrbId])
+
+  const buildConstellationPrompt = useCallback((pointsCount) => {
+    if (pointsCount >= 6) return 'polyrhythmic loop, evolving accents, layered pulses'
+    if (pointsCount >= 4) return 'syncopated loop, shimmering rhythm, tight groove'
+    if (pointsCount >= 3) return 'rhythmic motif, steady loop, crisp attacks'
+    return 'minimal pulse, sparse rhythm, gentle loop'
+  }, [])
+
+  const handleStarConnect = useCallback((playerId, starId) => {
+    if (!starId) return
+    const lock = starLocksRef.current[starId]
+    const now = performance.now()
+    if (lock && lock.playerId !== playerId && now - lock.timestamp < 900) return
+    starLocksRef.current[starId] = { playerId, timestamp: now }
+    setConstellationDrafts(prev => {
+      const draft = prev[playerId] || { points: [] }
+      if (draft.points[draft.points.length - 1] === starId) return prev
+      return {
+        ...prev,
+        [playerId]: {
+          points: [...draft.points, starId]
+        }
+      }
+    })
+  }, [])
+
+  const handleConstellationEnd = useCallback((playerId) => {
+    setConstellationDrafts(prev => {
+      const draft = prev[playerId]
+      if (!draft || draft.points.length < 2) {
+        const next = { ...prev }
+        delete next[playerId]
+        return next
+      }
+      const points = draft.points
+      const edges = points.slice(1).map((point, index) => [points[index], point])
+      const id = `c_${playerId}_${Date.now()}`
+      const prompt = buildConstellationPrompt(points.length)
+      const weight = Math.min(1.2, 0.4 + points.length * 0.12)
+      setConstellations(current => [
+        ...current,
+        { id, ownerId: playerId, points, edges, prompt, weight }
+      ])
+      const next = { ...prev }
+      delete next[playerId]
+      return next
+    })
+  }, [buildConstellationPrompt])
 
   // Loading
   if (appState === 'loading') {
@@ -422,6 +694,19 @@ function App() {
               toggleOrbActive={toggleOrbActive}
               isTracking={isTracking}
               weightedPrompts={weightedPrompts}
+              sceneMode={sceneMode}
+              galaxies={galaxies}
+              currentGalaxyId={currentGalaxyId}
+              onSelectGalaxy={(id) => {
+                selectGalaxy(id)
+                setSceneMode('solar')
+              }}
+              constellationStars={constellationStars}
+              constellations={constellations}
+              constellationDrafts={constellationDrafts}
+              onStarConnect={handleStarConnect}
+              onConstellationEnd={handleConstellationEnd}
+              blackHoles={blackHoles}
               getCameraMode={getCameraMode}
               // Legacy props for backward compatibility
               handPosition={handPosition}
@@ -442,6 +727,14 @@ function App() {
         weightedPrompts={weightedPrompts}
         averageInfluence={averageInfluence}
         totalInfluence={totalInfluence}
+        sceneMode={sceneMode}
+        galaxies={galaxies}
+        currentGalaxyId={currentGalaxyId}
+        onSelectGalaxy={selectGalaxy}
+        onToggleSceneMode={() => setSceneMode(mode => mode === 'solar' ? 'galaxyMap' : 'solar')}
+        constellations={constellations}
+        constellationDrafts={constellationDrafts}
+        blackHoleImpact={blackHoleImpact}
         isTracking={isTracking}
         isPinching={isPinching}
         isFist={isFist}
@@ -455,7 +748,7 @@ function App() {
         isPlaying={lyriaAudio.isPlaying}
         onPlay={handlePlay}
         onStop={handleStop}
-        config={config}
+        config={dynamicConfig}
         setConfig={setConfig}
         videoRef={videoRef}
       />
