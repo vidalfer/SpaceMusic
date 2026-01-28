@@ -28,113 +28,113 @@ function App() {
   // Orbital mechanics: closer planets orbit faster (Kepler's laws)
   const [orbs, setOrbs] = useState([
     // Inner planets (fast orbit, high influence when close)
-    { 
-      id: 'mercury', 
-      label: 'MERCURY', 
+    {
+      id: 'mercury',
+      label: 'MERCURY',
       planetName: 'Percussion',
-      prompt: 'punchy drums, electronic beat, heavy kick, snare hits, fast rhythms', 
+      prompt: 'punchy drums, electronic beat, heavy kick, snare hits, fast rhythms',
       color: '#b5b5b5',  // Gray
-      position: [2.5, 0, 0], 
+      position: [2.5, 0, 0],
       orbitRadius: 2.5,
       orbitSpeed: 4.0,    // Fastest orbit
       orbitOffset: 0,
       planetSize: 0.3,
-      active: true 
+      active: true
     },
-    { 
-      id: 'venus', 
-      label: 'VENUS', 
+    {
+      id: 'venus',
+      label: 'VENUS',
       planetName: 'Bass',
-      prompt: 'deep bass, sub frequencies, groovy bassline, warm low end', 
+      prompt: 'deep bass, sub frequencies, groovy bassline, warm low end',
       color: '#e6c87a',  // Yellow-orange
-      position: [3.5, 0, 0], 
+      position: [3.5, 0, 0],
       orbitRadius: 3.5,
       orbitSpeed: 2.8,
       orbitOffset: Math.PI * 0.5,
       planetSize: 0.45,
-      active: true 
+      active: true
     },
-    { 
-      id: 'earth', 
-      label: 'EARTH', 
+    {
+      id: 'earth',
+      label: 'EARTH',
       planetName: 'Melody',
-      prompt: 'beautiful melody, harmonic progressions, emotional lead, memorable tune', 
+      prompt: 'beautiful melody, harmonic progressions, emotional lead, memorable tune',
       color: '#4a90d9',  // Blue
-      position: [4.5, 0, 0], 
+      position: [4.5, 0, 0],
       orbitRadius: 4.5,
       orbitSpeed: 2.0,
       orbitOffset: Math.PI,
       planetSize: 0.5,
       hasMoon: true,
-      active: true 
+      active: true
     },
-    { 
-      id: 'mars', 
-      label: 'MARS', 
+    {
+      id: 'mars',
+      label: 'MARS',
       planetName: 'Guitar',
-      prompt: 'electric guitar riffs, distorted power chords, rock energy, aggressive strings', 
+      prompt: 'electric guitar riffs, distorted power chords, rock energy, aggressive strings',
       color: '#d94a3d',  // Red
-      position: [5.5, 0, 0], 
+      position: [5.5, 0, 0],
       orbitRadius: 5.5,
       orbitSpeed: 1.5,
       orbitOffset: Math.PI * 1.5,
       planetSize: 0.4,
-      active: true 
+      active: true
     },
     // Outer planets (slow orbit, ambient/texture sounds)
-    { 
-      id: 'jupiter', 
-      label: 'JUPITER', 
+    {
+      id: 'jupiter',
+      label: 'JUPITER',
       planetName: 'Orchestra',
-      prompt: 'orchestral strings, epic cinematic, lush ensemble, majestic brass', 
+      prompt: 'orchestral strings, epic cinematic, lush ensemble, majestic brass',
       color: '#d9a066',  // Orange-brown
-      position: [7, 0, 0], 
+      position: [7, 0, 0],
       orbitRadius: 7,
       orbitSpeed: 0.8,
       orbitOffset: Math.PI * 0.3,
       planetSize: 0.9,    // Largest planet
-      active: true 
+      active: true
     },
-    { 
-      id: 'saturn', 
-      label: 'SATURN', 
+    {
+      id: 'saturn',
+      label: 'SATURN',
       planetName: 'Synth',
-      prompt: 'analog synth pads, warm synthesizer, dreamy textures, atmospheric layers', 
+      prompt: 'analog synth pads, warm synthesizer, dreamy textures, atmospheric layers',
       color: '#e8d5a3',  // Pale gold
-      position: [8.5, 0, 0], 
+      position: [8.5, 0, 0],
       orbitRadius: 8.5,
       orbitSpeed: 0.5,
       orbitOffset: Math.PI * 0.8,
       planetSize: 0.75,
       hasRings: true,     // Saturn's rings!
-      active: true 
+      active: true
     },
-    { 
-      id: 'uranus', 
-      label: 'URANUS', 
+    {
+      id: 'uranus',
+      label: 'URANUS',
       planetName: 'Ambient',
-      prompt: 'ambient textures, ethereal pads, cosmic soundscape, space atmosphere', 
+      prompt: 'ambient textures, ethereal pads, cosmic soundscape, space atmosphere',
       color: '#7de3e3',  // Cyan
-      position: [10, 0, 0], 
+      position: [10, 0, 0],
       orbitRadius: 10,
       orbitSpeed: 0.3,
       orbitOffset: Math.PI * 1.2,
       planetSize: 0.6,
       tiltAngle: Math.PI * 0.4,  // Uranus is tilted!
-      active: true 
+      active: true
     },
-    { 
-      id: 'neptune', 
-      label: 'NEPTUNE', 
+    {
+      id: 'neptune',
+      label: 'NEPTUNE',
       planetName: 'FX',
-      prompt: 'deep reverb, echoing effects, distant sounds, mysterious atmosphere, cosmic delay', 
+      prompt: 'deep reverb, echoing effects, distant sounds, mysterious atmosphere, cosmic delay',
       color: '#4169e1',  // Deep blue
-      position: [11.5, 0, 0], 
+      position: [11.5, 0, 0],
       orbitRadius: 11.5,
       orbitSpeed: 0.2,    // Slowest orbit
       orbitOffset: Math.PI * 1.7,
       planetSize: 0.55,
-      active: true 
+      active: true
     },
   ])
 
@@ -143,7 +143,7 @@ function App() {
 
   // Single player hand tracking (local MediaPipe)
   const singlePlayer = useHandTracking()
-  
+
   // Multiplayer tracking (YOLO + MediaPipe on backend)
   const multiplayer = useMultiplayerTracking()
 
@@ -163,7 +163,7 @@ function App() {
     } else {
       // Single player: convert local tracking to player format
       if (!singlePlayer.isTracking) return []
-      
+
       return [{
         id: 'player_0',
         color: '#00ffaa',
@@ -174,8 +174,8 @@ function App() {
         }]
       }]
     }
-  }, [isMultiplayer, multiplayer.players, singlePlayer.handPosition, 
-      singlePlayer.isPinching, singlePlayer.isFist, singlePlayer.isTracking])
+  }, [isMultiplayer, multiplayer.players, singlePlayer.handPosition,
+    singlePlayer.isPinching, singlePlayer.isFist, singlePlayer.isTracking])
 
   // Primary hand for backward compatibility (first hand of first player)
   const primaryHand = useMemo(() => {
@@ -223,7 +223,7 @@ function App() {
   const getCameraMode = useCallback((playerId) => {
     const player = players.find(p => p.id === playerId)
     if (!player || player.hands.length === 0) return 'idle'
-    
+
     const hand = player.hands[0]
     if (grabbedOrbs[playerId]) return 'dragging'
     if (hand.isFist) return 'camera'
@@ -352,7 +352,7 @@ function App() {
     } else {
       // Can't easily cleanup single player, just switch
     }
-    
+
     setIsMultiplayer(prev => !prev)
     setGrabbedOrbs({})
   }, [isMultiplayer, multiplayer])

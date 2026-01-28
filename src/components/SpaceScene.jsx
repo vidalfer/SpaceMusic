@@ -1,7 +1,12 @@
-import React, { useRef, useMemo, useEffect, useCallback } from 'react'
+import React, { useRef, useMemo, useEffect, useCallback, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Stars, Text, Sparkles } from '@react-three/drei'
 import * as THREE from 'three'
+import GalaxyMap, { WarpEffect } from './GalaxyMap'
+import BlackHole, { BlackHoleDropZone } from './BlackHole'
+import NavigationPortal from './NavigationPortal'
+import ConstellationSystem from './ConstellationSystem'
+import { useAppStore } from '../store/appStore'
 
 /**
  * SpaceScene - 3D environment with orbital camera and depth control
@@ -31,28 +36,128 @@ function SpaceScene({
   grabbedOrbId
 }) {
   const { camera, viewport } = useThree()
-  
-  // Camera state refs - these PERSIST and don't reset
+
+  // Galaxy navigation state  // Store state
+  const zoomLevel = useAppStore(state => state.zoomLevel)
+  const setZoomLevel = useAppStore(state => state.setZoomLevel)
+  const viewMode = useAppStore(state => state.viewMode)
+
+  // Camera animation
   const cameraAngleRef = useRef({ theta: 0, phi: Math.PI / 3 })
-  const cameraRadiusRef = useRef(22) // Larger radius to see the whole solar system
-  
+  const cameraRadiusRef = useRef(15)
+  const [shouldCenterCamera, setShouldCenterCamera] = useState(false)
+
+  // Reset camera when entering constellation mode for immediate optimal viewing
+  useEffect(() => {
+    if (viewMode === 'constellation') {
+      // Frontal view: theta=0 (facing forward), phi=PI/2 (horizontal)
+      cameraAngleRef.current = { theta: 0, phi: Math.PI / 2 }
+      // Move camera instantly to the correct position
+      const radius = 25
+      const theta = 0
+      const phi = Math.PI / 2
+      const lookAtZ = -15
+      camera.position.set(
+        radius * Math.sin(phi) * Math.sin(theta),
+        lookAtZ + radius * Math.cos(phi),
+        lookAtZ + radius * Math.sin(phi) * Math.cos(theta)
+      )
+      camera.lookAt(0, 0, lookAtZ)
+    }
+  }, [viewMode, camera])
+
+  // Transition logic
+  const isTransitioning = useAppStore(state => state.isTransitioning)
+  const transitionProgress = useAppStore(state => state.transitionProgress)
+  const startGalaxyTransition = useAppStore(state => state.startGalaxyTransition)
+  const updateTransitionProgress = useAppStore(state => state.updateTransitionProgress)
+  const galaxies = useAppStore(state => state.galaxies)
+
+  // Zoom animation state
+  const targetZoomRadius = useRef(22)
+  const zoomRadiusMap = useMemo(() => ({
+    'solar_system': 22,
+    'galaxy_view': 150,
+    'universe_view': 400
+  }), [])
+
+  // Track two-hand gesture for zoom
+  const prevHandDistanceRef = useRef(null)
+  const zoomGestureActiveRef = useRef(false)
+
   // Track actual visual positions of orbs (updated by SoundOrb components)
   const orbVisualPositionsRef = useRef({}) // { orbId: THREE.Vector3 }
-  
+
   // Track closest orb for each player's hand
   const closestOrbsRef = useRef({}) // { playerId_handIndex: orbId }
-  
+
   // Function for SoundOrb to report its current visual position
   const registerOrbPosition = useCallback((orbId, position) => {
     orbVisualPositionsRef.current[orbId] = position.clone()
   }, [])
 
-  // Camera control - uses first player with fist gesture
+  // Camera control - uses first player with fist gesture + zoom gestures
   useFrame((state, delta) => {
+    // Update transition progress if transitioning
+    if (isTransitioning) {
+      const newProgress = transitionProgress + delta * 0.5 // 2 seconds transition
+      updateTransitionProgress(Math.min(newProgress, 1))
+    }
+
+    // Update target zoom radius based on zoom level
+    targetZoomRadius.current = zoomRadiusMap[zoomLevel] || 22
+
+    // Smooth zoom animation
+    const zoomDiff = targetZoomRadius.current - cameraRadiusRef.current
+    if (Math.abs(zoomDiff) > 0.1) {
+      cameraRadiusRef.current += zoomDiff * delta * 2
+    }
+
+    // Check for two-hand zoom gesture (spread/pinch for zoom)
+    if (players.length > 0 && players[0].hands.length >= 2) {
+      const hand1 = players[0].hands[0]
+      const hand2 = players[0].hands[1]
+
+      // Calculate distance between hands
+      const dx = hand1.position.x - hand2.position.x
+      const dy = hand1.position.y - hand2.position.y
+      const handDistance = Math.sqrt(dx * dx + dy * dy)
+
+      if (prevHandDistanceRef.current !== null) {
+        const distanceDelta = handDistance - prevHandDistanceRef.current
+
+        // Significant spread = zoom out, significant pinch = zoom in
+        if (Math.abs(distanceDelta) > 0.02) {
+          zoomGestureActiveRef.current = true
+
+          if (distanceDelta > 0.05) {
+            // Spreading hands - zoom out
+            if (zoomLevel === 'solar_system') {
+              setZoomLevel('galaxy_view')
+            } else if (zoomLevel === 'galaxy_view') {
+              setZoomLevel('universe_view')
+            }
+          } else if (distanceDelta < -0.05) {
+            // Pinching hands - zoom in
+            if (zoomLevel === 'universe_view') {
+              setZoomLevel('galaxy_view')
+            } else if (zoomLevel === 'galaxy_view') {
+              setZoomLevel('solar_system')
+            }
+          }
+        }
+      }
+
+      prevHandDistanceRef.current = handDistance
+    } else {
+      prevHandDistanceRef.current = null
+      zoomGestureActiveRef.current = false
+    }
+
     // Find any player making a fist gesture
     let fistPlayer = null
     let fistHand = null
-    
+
     for (const player of players) {
       for (let i = 0; i < player.hands.length; i++) {
         const hand = player.hands[i]
@@ -64,90 +169,156 @@ function SpaceScene({
       }
       if (fistPlayer) break
     }
-    
-    // Rotate camera based on fist gesture
+
+    // Rotate camera based on fist gesture - REDUCED SENSITIVITY
     if (fistPlayer && fistHand) {
-      // Use velocity from position change (would need to track previous)
-      // For now, use the hand position offset from center
       const offsetX = (fistHand.position.x - 0.5) * 2
       const offsetY = (fistHand.position.y - 0.5) * 2
-      
-      cameraAngleRef.current.theta += offsetX * delta * 2
-      cameraAngleRef.current.phi -= offsetY * delta * 1.5
+
+      cameraAngleRef.current.theta += offsetX * delta * 0.8  // Reduced from 2
+      cameraAngleRef.current.phi -= offsetY * delta * 0.6    // Reduced from 1.5
       cameraAngleRef.current.phi = Math.max(0.3, Math.min(Math.PI - 0.3, cameraAngleRef.current.phi))
     } else if (cameraMode === 'camera' && isFist && handVelocity) {
-      // Legacy single player camera control
-      cameraAngleRef.current.theta += handVelocity.x * delta * 4
-      cameraAngleRef.current.phi -= handVelocity.y * delta * 3
+      // Legacy single player camera control - REDUCED SENSITIVITY
+      cameraAngleRef.current.theta += handVelocity.x * delta * 1.5  // Reduced from 4
+      cameraAngleRef.current.phi -= handVelocity.y * delta * 1.2    // Reduced from 3
       cameraAngleRef.current.phi = Math.max(0.3, Math.min(Math.PI - 0.3, cameraAngleRef.current.phi))
     }
-    
-    // Calculate camera position
-    const radius = cameraRadiusRef.current
-    const theta = cameraAngleRef.current.theta
-    const phi = cameraAngleRef.current.phi
-    
-    const targetCamPos = new THREE.Vector3(
-      radius * Math.sin(phi) * Math.sin(theta),
-      radius * Math.cos(phi),
-      radius * Math.sin(phi) * Math.cos(theta)
-    )
-    
+
+    // Handle camera centering request
+    if (shouldCenterCamera) {
+      if (viewMode === 'constellation') {
+        cameraAngleRef.current = { theta: 0, phi: Math.PI / 2 }
+      } else {
+        cameraAngleRef.current = { theta: 0, phi: Math.PI / 3 }
+      }
+      setShouldCenterCamera(false)
+    }
+
+    // Calculate camera position based on view mode
+    let targetCamPos
+    let lookAtPos = new THREE.Vector3(0, 0, 0)
+
+    if (viewMode === 'constellation') {
+      // Orbital camera for constellation mode
+      // Center of orbit is Z = -15 (where stars are)
+      lookAtPos = new THREE.Vector3(0, 0, -15)
+
+      // Use existing camera angles but with fixed radius relative to lookAt
+      const radius = 25
+      const theta = cameraAngleRef.current.theta
+      const phi = cameraAngleRef.current.phi
+
+      // Calculate position relative to lookAt
+      const relX = radius * Math.sin(phi) * Math.sin(theta)
+      const relY = radius * Math.cos(phi)
+      const relZ = radius * Math.sin(phi) * Math.cos(theta)
+
+      targetCamPos = new THREE.Vector3(
+        lookAtPos.x + relX,
+        lookAtPos.y + relY,
+        lookAtPos.z + relZ
+      )
+    } else if (viewMode === 'black_hole') {
+      // Fixed view looking at black hole at [0, -5, -10]
+      targetCamPos = new THREE.Vector3(0, 2, 5)
+      lookAtPos = new THREE.Vector3(0, -5, -10)
+    } else {
+      // Default orbital camera
+      const radius = cameraRadiusRef.current
+      const theta = cameraAngleRef.current.theta
+      const phi = cameraAngleRef.current.phi
+
+      targetCamPos = new THREE.Vector3(
+        radius * Math.sin(phi) * Math.sin(theta),
+        radius * Math.cos(phi),
+        radius * Math.sin(phi) * Math.cos(theta)
+      )
+    }
+
     camera.position.lerp(targetCamPos, 0.1)
-    camera.lookAt(0, 0, 0)
+    camera.lookAt(lookAtPos)
   })
+
+  // Handle galaxy selection from GalaxyMap
+  const handleSelectGalaxy = useCallback((galaxyId) => {
+    console.log('[GALAXY] Transitioning to:', galaxyId)
+    startGalaxyTransition(galaxyId)
+  }, [startGalaxyTransition])
+
+  // Handle constellation completion
+  const addConstellation = useAppStore(state => state.addConstellation)
+  const handleConstellationComplete = useCallback((type, name) => {
+    console.log(`[CONSTELLATION] Completed: ${name} (${type})`)
+    addConstellation(type, name)
+    // Here you could trigger audio effects or prompts based on constellation type
+  }, [addConstellation])
 
   // Calculate which orb is closest to a specific hand position
   // Uses VISUAL positions (after animation) for accurate selection
   const getClosestOrbForHand = useCallback((handPos, excludeOrbIds = []) => {
     let closest = null
-    let minDist = Infinity
-    
+    let minScore = Infinity // Combined score: lower is better
+
     orbs.forEach(orb => {
       if (!orb.active) return
       if (excludeOrbIds.includes(orb.id)) return
-      
+
       // Use VISUAL position if available, otherwise use stored position
       const visualPos = orbVisualPositionsRef.current[orb.id]
       const orbPos = visualPos || new THREE.Vector3(...orb.position)
-      
+
       // Project orb to screen
       const projected = orbPos.clone().project(camera)
+
+      // CRITICAL: Skip planets behind the camera (Z > 1 in NDC means behind)
+      // Also skip planets too far from camera view frustum
+      if (projected.z > 1 || projected.z < -1) return
+
       const screenX = (projected.x + 1) / 2
       const screenY = (projected.y + 1) / 2
-      
+
       // Screen distance from hand cursor
       const dx = handPos.x - screenX
       const dy = handPos.y - screenY
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      
+      const screenDist = Math.sqrt(dx * dx + dy * dy)
+
       // Calculate dynamic threshold based on planet size and distance from camera
-      // Larger planets and closer planets are easier to select
       const planetSize = orb.planetSize || 0.5
       const distFromCamera = orbPos.distanceTo(camera.position)
-      const baseThreshold = 0.15 // Increased base threshold
-      const sizeBonus = planetSize * 0.08 // Bigger planets have larger selection area
-      const distanceFactor = Math.max(0.5, 20 / distFromCamera) // Closer planets easier to select
-      const selectionThreshold = Math.min(0.25, baseThreshold + sizeBonus) * distanceFactor
-      
-      // Closer orb within threshold wins
-      if (dist < minDist && dist < selectionThreshold) {
-        minDist = dist
+      const baseThreshold = 0.20
+      const sizeBonus = planetSize * 0.10
+      const distanceFactor = Math.max(0.5, 20 / distFromCamera)
+      const selectionThreshold = Math.min(0.35, baseThreshold + sizeBonus) * distanceFactor
+
+      // If not within selection threshold, skip
+      if (screenDist >= selectionThreshold) return
+
+      // DEPTH PRIORITY: Create a score that prioritizes:
+      // 1. Closer to cursor on screen (screenDist)
+      // 2. Closer to camera (lower distFromCamera)
+      // Score = screenDist + (distFromCamera / 100)
+      // This way, when two planets overlap on screen, the closer one wins
+      const depthPenalty = distFromCamera / 50 // Subtle depth influence
+      const score = screenDist + depthPenalty
+
+      if (score < minScore) {
+        minScore = score
         closest = orb.id
       }
     })
-    
+
     return closest
   }, [orbs, camera])
 
   // LOCK SYSTEM: Prevents selecting wrong planet when pinching
   // When cursor hovers over a planet for LOCK_TIME, it becomes "locked"
   // Only the locked planet can be grabbed until cursor moves away
-  const LOCK_TIME = 120 // milliseconds to lock onto a planet (reduced for responsiveness)
+  const LOCK_TIME = 250 // milliseconds to lock onto a planet (increased for stability)
   const lockedOrbRef = useRef(null)        // Currently locked planet ID
   const lockCandidateRef = useRef(null)    // Planet being considered for lock
   const lockStartTimeRef = useRef(0)       // When we started hovering over candidate
-  
+
   // Legacy: single player closest orb
   const closestOrbRef = useRef(null)
 
@@ -155,10 +326,10 @@ function SpaceScene({
   useFrame(() => {
     const alreadyGrabbed = Object.values(grabbedOrbs)
     const now = performance.now()
-    
+
     // Use legacy handPosition for primary cursor
     const primaryHand = handPosition
-    
+
     // If currently dragging, maintain lock on grabbed orb
     if (grabbedOrbId) {
       closestOrbRef.current = grabbedOrbId
@@ -167,7 +338,7 @@ function SpaceScene({
       closestOrbsRef.current = {}
       return
     }
-    
+
     // If in camera mode or not tracking, clear everything
     if (!isTracking || cameraMode === 'camera') {
       closestOrbRef.current = null
@@ -176,10 +347,10 @@ function SpaceScene({
       closestOrbsRef.current = {}
       return
     }
-    
+
     // Find what the cursor is currently over
     const currentClosest = getClosestOrbForHand(primaryHand, alreadyGrabbed)
-    
+
     // LOCK LOGIC
     if (lockedOrbRef.current) {
       // We have a locked planet - check if cursor is still near it
@@ -193,7 +364,7 @@ function SpaceScene({
         const dx = primaryHand.x - screenX
         const dy = primaryHand.y - screenY
         const dist = Math.sqrt(dx * dx + dy * dy)
-        
+
         // If cursor moved too far from locked planet, release lock
         const unlockThreshold = 0.3 // Generous threshold to prevent accidental unlock
         if (dist > unlockThreshold) {
@@ -208,37 +379,37 @@ function SpaceScene({
         lockCandidateRef.current = currentClosest
         lockStartTimeRef.current = now
       }
-      
+
       // While locked, the locked orb is THE closest (exclusive)
       closestOrbRef.current = lockedOrbRef.current
-      
+
     } else {
       // No lock yet - work on acquiring one
       if (currentClosest) {
-          if (currentClosest === lockCandidateRef.current) {
-              // Same planet as before - check if we've hovered long enough
-              const hoverTime = now - lockStartTimeRef.current
-              if (hoverTime >= LOCK_TIME) {
-                // LOCK acquired!
-                console.log(`[LOCK] Locked onto: ${currentClosest}`)
-                lockedOrbRef.current = currentClosest
-                lockCandidateRef.current = null
-              }
-            } else {
-              // New planet - start timing
-              console.log(`[CANDIDATE] Hovering over: ${currentClosest}`)
-              lockCandidateRef.current = currentClosest
-              lockStartTimeRef.current = now
-            }
+        if (currentClosest === lockCandidateRef.current) {
+          // Same planet as before - check if we've hovered long enough
+          const hoverTime = now - lockStartTimeRef.current
+          if (hoverTime >= LOCK_TIME) {
+            // LOCK acquired!
+            console.log(`[LOCK] Locked onto: ${currentClosest}`)
+            lockedOrbRef.current = currentClosest
+            lockCandidateRef.current = null
+          }
+        } else {
+          // New planet - start timing
+          console.log(`[CANDIDATE] Hovering over: ${currentClosest}`)
+          lockCandidateRef.current = currentClosest
+          lockStartTimeRef.current = now
+        }
       } else {
         // Cursor not over any planet - reset candidate
         lockCandidateRef.current = null
       }
-      
+
       // Set closest (for visual feedback) - locked has priority
       closestOrbRef.current = lockedOrbRef.current || lockCandidateRef.current
     }
-    
+
     // Clear multiplayer refs (we're using single player lock system)
     closestOrbsRef.current = {}
   })
@@ -250,7 +421,7 @@ function SpaceScene({
     <>
       {/* Deep space background */}
       <color attach="background" args={['#000005']} />
-      
+
       {/* Distant stars - multiple layers for depth */}
       <Stars
         radius={200}
@@ -261,7 +432,7 @@ function SpaceScene({
         fade
         speed={0.05}
       />
-      
+
       {/* Closer stars with more color */}
       <Stars
         radius={80}
@@ -272,7 +443,7 @@ function SpaceScene({
         fade
         speed={0.1}
       />
-      
+
       {/* Milky way glow effect */}
       <mesh rotation={[Math.PI / 4, 0, Math.PI / 6]}>
         <planeGeometry args={[300, 80]} />
@@ -286,46 +457,70 @@ function SpaceScene({
 
       {/* Ambient space lighting */}
       <ambientLight intensity={0.08} />
-      
-      {/* The Sun - center of our musical solar system */}
-      <Sun weightedPrompts={weightedPrompts} />
 
-      {/* Orbital paths for each planet */}
-      <OrbitalPaths orbs={orbs} />
+      {/* Ambient space lighting */}
+      <ambientLight intensity={0.08} />
 
-      {/* Energy beams from planets to Sun */}
-      <ConnectionBeams orbs={orbs} weightedPrompts={weightedPrompts} center={centerPosition} />
+      {/* SOLAR SYSTEM ELEMENTS - Only visible in default mode */}
+      {viewMode === 'default' && (
+        <>
+          {/* The Sun - center of our musical solar system */}
+          <Sun weightedPrompts={weightedPrompts} />
 
-      {/* Orbs - with LOCK system for single selection */}
-      {orbs.map((orb) => {
-        const weightData = weightedPrompts.find(w => w.orbId === orb.id)
-        const weight = weightData?.weight || 0
-        
-        return (
-          <SoundOrb
-            key={orb.id}
-            orb={orb}
-            grabbedOrbId={grabbedOrbId}
-            lockedOrbRef={lockedOrbRef}
-            lockCandidateRef={lockCandidateRef}
-            setGrabbedOrbId={setGrabbedOrbId}
-            updateOrbPosition={updateOrbPosition}
-            toggleOrbActive={toggleOrbActive}
-            registerOrbPosition={registerOrbPosition}
-            handPosition={handPosition}
-            camera={camera}
-            isPinching={isPinching}
-            isTracking={isTracking}
-            weight={weight}
-            cameraMode={cameraMode}
-            playerId={'player_0'}
-            playerColor={'#00ffaa'}
-          />
-        )
-      })}
+          {/* Orbital paths for each planet */}
+          <OrbitalPaths orbs={orbs} />
+
+          {/* Energy beams from planets to Sun */}
+          <ConnectionBeams orbs={orbs} weightedPrompts={weightedPrompts} center={centerPosition} />
+
+          {/* Orbs - with LOCK system for single selection */}
+          {orbs.map((orb) => {
+            const weightData = weightedPrompts.find(w => w.orbId === orb.id)
+            const weight = weightData?.weight || 0
+
+            return (
+              <SoundOrb
+                key={orb.id}
+                orb={orb}
+                grabbedOrbId={grabbedOrbId}
+                lockedOrbRef={lockedOrbRef}
+                lockCandidateRef={lockCandidateRef}
+                setGrabbedOrbId={setGrabbedOrbId}
+                updateOrbPosition={updateOrbPosition}
+                toggleOrbActive={toggleOrbActive}
+                registerOrbPosition={registerOrbPosition}
+                handPosition={handPosition}
+                camera={camera}
+                isPinching={isPinching}
+                isTracking={isTracking}
+                weight={weight}
+                cameraMode={cameraMode}
+                playerId={'player_0'}
+                playerColor={'#00ffaa'}
+              />
+            )
+          })}
+
+          {/* Legacy single player cursor */}
+          {players.length === 0 && isTracking && (
+            <HandCursor
+              handPosition={handPosition}
+              isPinching={isPinching}
+              isFist={isFist}
+              hasGrabbedOrb={grabbedOrbId !== null}
+              closestOrb={closestOrbRef.current}
+              camera={camera}
+              cameraMode={cameraMode}
+            />
+          )}
+
+          {/* Grid */}
+          <ReferenceGrid />
+        </>
+      )}
 
       {/* Multiplayer cursors - one per hand per player */}
-      {players.map(player => 
+      {players.map(player =>
         player.hands.map((hand, handIndex) => (
           <HandCursor
             key={`${player.id}_${handIndex}`}
@@ -341,22 +536,78 @@ function SpaceScene({
           />
         ))
       )}
-      
-      {/* Legacy single player cursor (when no multiplayer players) */}
-      {players.length === 0 && isTracking && (
-        <HandCursor
+
+      {/* BLACK HOLE MINIGAME */}
+      {viewMode === 'black_hole' && (
+        <>
+          <BlackHole position={[0, -5, -10]} size={4} active={true} />
+          <BlackHoleDropZone
+            position={[0, -5, -10]}
+            radius={8}
+            orbs={orbs} // You might want distinct orbs for this minigame
+            onOrbEnter={(orbId) => console.log('[DROP]', orbId)}
+            onOrbApproach={(orbId, proximity) => console.log('[APPROACH]', orbId, proximity)}
+          />
+          <Text position={[0, 8, -10]} fontSize={1} color="white" anchorX="center" anchorY="middle">
+            BURACO NEGRO - DROP ZONE
+          </Text>
+        </>
+      )}
+
+      {/* Navigation Portal - Global Navigation */}
+      <NavigationPortal
+        handPosition={handPosition}
+        isPinching={isPinching}
+        isTracking={isTracking}
+      />
+
+      {/* Constellation System - connect stars to create musical patterns */}
+      {/* Now only active and visible in constellation mode */}
+      <ConstellationSystem
+        handPosition={handPosition}
+        isPinching={isPinching}
+        isTracking={isTracking}
+        onConstellationComplete={handleConstellationComplete}
+      />
+
+      {/* Galaxy Map - visible when zoomed out in default mode */}
+      {viewMode === 'default' && (
+        <GalaxyMap
           handPosition={handPosition}
           isPinching={isPinching}
-          isFist={isFist}
-          hasGrabbedOrb={grabbedOrbId !== null}
-          closestOrb={closestOrbRef.current}
-          camera={camera}
-          cameraMode={cameraMode}
+          isTracking={isTracking}
+          onSelectGalaxy={handleSelectGalaxy}
         />
       )}
 
-      {/* Grid */}
-      <ReferenceGrid />
+      {/* Warp Effect during galaxy transition */}
+      <WarpEffect isActive={isTransitioning} progress={transitionProgress} />
+
+      {/* Center Camera Button - Visible in Solar System and Constellation modes */}
+      {/* Position at Z=5 in constellation mode to avoid conflict with stars at Z=-15 */}
+      {(viewMode === 'default' || viewMode === 'constellation') && zoomLevel === 'solar_system' && (
+        <CenterCameraButton
+          handPosition={handPosition}
+          isPinching={isPinching}
+          onCenter={() => setShouldCenterCamera(true)}
+          position={viewMode === 'constellation' ? [12, 6, 5] : [8, 6, 0]}
+        />
+      )}
+
+      {/* Zoom Level Indicator */}
+      {zoomLevel !== 'solar_system' && (
+        <Text
+          position={[0, -5, 0]}
+          fontSize={1}
+          color="#ffffff"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.05}
+          outlineColor="#000000"
+        >
+          {zoomLevel === 'galaxy_view' ? 'VISÃO GALÁCTICA' : 'VISÃO DO UNIVERSO'}
+        </Text>
+      )}
     </>
   )
 }
@@ -370,7 +621,7 @@ function Sun({ weightedPrompts }) {
   const coronaRef = useRef()
   const glowRef = useRef()
   const flareRefs = useRef([])
-  
+
   const totalWeight = weightedPrompts.reduce((sum, w) => sum + w.weight, 0)
   const normalizedPower = Math.min(totalWeight / 8, 1.5)
 
@@ -426,9 +677,9 @@ function Sun({ weightedPrompts }) {
       {/* Sun surface texture (animated noise effect) */}
       <mesh>
         <sphereGeometry args={[1.22, 32, 32]} />
-        <meshBasicMaterial 
-          color="#ffdd44" 
-          transparent 
+        <meshBasicMaterial
+          color="#ffdd44"
+          transparent
           opacity={0.3}
           wireframe
         />
@@ -437,9 +688,9 @@ function Sun({ weightedPrompts }) {
       {/* Corona - outer atmosphere */}
       <mesh ref={coronaRef}>
         <sphereGeometry args={[1.8, 32, 32]} />
-        <meshBasicMaterial 
-          color={coronaColor} 
-          transparent 
+        <meshBasicMaterial
+          color={coronaColor}
+          transparent
           opacity={0.15 + normalizedPower * 0.1}
           side={THREE.BackSide}
         />
@@ -447,8 +698,8 @@ function Sun({ weightedPrompts }) {
 
       {/* Solar flares */}
       {[0, 1, 2, 3, 4, 5].map((i) => (
-        <mesh 
-          key={i} 
+        <mesh
+          key={i}
           ref={el => flareRefs.current[i] = el}
           position={[
             Math.cos(i / 6 * Math.PI * 2) * 1.5,
@@ -464,27 +715,27 @@ function Sun({ weightedPrompts }) {
       {/* Outer glow */}
       <mesh ref={glowRef}>
         <sphereGeometry args={[2.5, 32, 32]} />
-        <meshBasicMaterial 
-          color={glowColor} 
-          transparent 
+        <meshBasicMaterial
+          color={glowColor}
+          transparent
           opacity={0.08 + normalizedPower * 0.05}
           side={THREE.BackSide}
         />
       </mesh>
 
       {/* Main light source */}
-      <pointLight 
+      <pointLight
         color="#fff5e0"
-        intensity={3 + normalizedPower * 4} 
-        distance={50} 
+        intensity={3 + normalizedPower * 4}
+        distance={50}
         decay={1.5}
       />
 
       {/* Secondary warm light */}
-      <pointLight 
+      <pointLight
         color="#ffaa44"
-        intensity={1 + normalizedPower * 2} 
-        distance={30} 
+        intensity={1 + normalizedPower * 2}
+        distance={30}
         decay={2}
       />
 
@@ -518,7 +769,7 @@ function OrbitalPaths({ orbs }) {
         const radius = orb.orbitRadius || Math.sqrt(
           orb.position[0] ** 2 + orb.position[2] ** 2
         )
-        
+
         return (
           <mesh key={orb.id}>
             <ringGeometry args={[radius - 0.02, radius + 0.02, 128]} />
@@ -531,7 +782,7 @@ function OrbitalPaths({ orbs }) {
           </mesh>
         )
       })}
-      
+
       {/* Inner zone marker (high influence) */}
       <mesh>
         <ringGeometry args={[2.4, 2.6, 64]} />
@@ -565,10 +816,10 @@ function ConnectionBeams({ orbs, weightedPrompts, center }) {
         const weightData = weightedPrompts.find(w => w.orbId === orb.id)
         const weight = weightData?.weight || 0.5
         const normalizedWeight = Math.min(weight / 1.5, 1)
-        
+
         const start = new THREE.Vector3(...orb.position)
         const end = center.clone()
-        
+
         return (
           <group key={orb.id}>
             <line>
@@ -587,10 +838,10 @@ function ConnectionBeams({ orbs, weightedPrompts, center }) {
               />
             </line>
 
-            <EnergyParticles 
-              start={start} 
-              end={end} 
-              color={orb.color} 
+            <EnergyParticles
+              start={start}
+              end={end}
+              color={orb.color}
               intensity={normalizedWeight}
             />
           </group>
@@ -609,15 +860,15 @@ function EnergyParticles({ start, end, color, intensity }) {
 
   useFrame((state) => {
     const time = state.clock.elapsedTime
-    
+
     particlesRef.current.forEach((particle, i) => {
       if (particle) {
         const t = ((time * 0.4 + i * 0.25) % 1)
         particle.position.lerpVectors(start, end, t)
-        
+
         const fade = Math.sin(t * Math.PI)
         particle.material.opacity = fade * 0.7 * intensity
-        
+
         const scale = 0.06 + Math.sin(time * 4 + i) * 0.02
         particle.scale.setScalar(scale * (1 + intensity * 0.5))
       }
@@ -665,7 +916,7 @@ function SoundOrb({
 }) {
   // Compute grabbed state (this is from React state, so it's reliable)
   const isGrabbed = grabbedOrbId === orb.id
-  
+
   const groupRef = useRef()
   const meshRef = useRef()
   const glowRef = useRef()
@@ -674,23 +925,23 @@ function SoundOrb({
   const highlightRef = useRef()
   const ringsRef = useRef() // Saturn's rings
   const moonRef = useRef()  // Earth's moon
-  
+
   // Visual indicator refs (controlled in useFrame for real-time updates)
   const candidateRingRef = useRef()
   const lockedRingRef = useRef()
   const lockedInnerRingRef = useRef()
   const grabbedRingRef = useRef()
   const grabbedOuterRingRef = useRef()
-  
+
   // Orbital state
   const orbitAngleRef = useRef(orb.orbitOffset || 0)
   const targetOrbitAngleRef = useRef(orb.orbitOffset || 0)
   const currentOrbitRadius = useRef(orb.orbitRadius || 5)
   const targetOrbitRadius = useRef(orb.orbitRadius || 5)
-  
+
   const currentPosition = useRef(new THREE.Vector3(...orb.position))
   const targetPosition = useRef(new THREE.Vector3(...orb.position))
-  
+
   // Grab state
   const grabStartAngleOffset = useRef(0) // Offset between cursor angle and planet angle at grab start
   const wasGrabbed = useRef(false)
@@ -702,11 +953,14 @@ function SoundOrb({
   const normalizedWeight = weight > 0 ? Math.min(weight / 1.5, 1) : 0.3
   const planetSize = orb.planetSize || 0.5
 
+  // isClosest is derived from lock state (for visual feedback)
+  const isClosest = lockedOrbRef?.current === orb.id || lockCandidateRef?.current === orb.id
+
   useFrame((state, delta) => {
     if (!meshRef.current) return
 
     const time = state.clock.elapsedTime
-    
+
     // Check lock state in real-time from refs
     const isLocked = lockedOrbRef?.current === orb.id
     const isCandidate = lockCandidateRef?.current === orb.id && !isLocked
@@ -724,19 +978,9 @@ function SoundOrb({
       if (isPinching && canGrab && !isGrabbed) {
         console.log(`[GRAB] ${orb.id} (was locked: ${isLocked})`)
         setGrabbedOrbId(orb.id, playerId)
-        
-        // Store the offset between cursor angle and current planet angle
-        // This prevents the planet from jumping to the cursor position
-        const ndcX = (handPosition.x - 0.5) * 2
-        const ndcY = (handPosition.y - 0.5) * 2
-        const cursorAngle = Math.atan2(ndcY, ndcX)
-        grabStartAngleOffset.current = orbitAngleRef.current - cursorAngle
-        
-        // Store current orbit radius when grabbed
-        targetOrbitRadius.current = currentOrbitRadius.current
         wasGrabbed.current = true
       }
-      
+
       if (!isPinching && isGrabbed) {
         setGrabbedOrbId(null, playerId)
         // Update the orb's stored position
@@ -747,28 +991,40 @@ function SoundOrb({
 
     // Update position
     if (isGrabbed) {
-      // When grabbed: hand controls orbit radius
-      // Hand close to camera = planet close to Sun
-      const targetRadius = MIN_ORBIT_RADIUS + handPosition.z * (MAX_ORBIT_RADIUS - MIN_ORBIT_RADIUS)
-      targetOrbitRadius.current = targetRadius
-      
-      // XY movement changes orbital angle WITH offset preservation
+      // Convert cursor position to NDC (-1 to 1)
       const ndcX = (handPosition.x - 0.5) * 2
       const ndcY = (handPosition.y - 0.5) * 2
-      
-      // Convert screen position to orbital angle, adding the grab offset
-      // This makes the planet follow the cursor from where it was grabbed
-      const cursorAngle = Math.atan2(ndcY, ndcX)
-      targetOrbitAngleRef.current = cursorAngle + grabStartAngleOffset.current
+
+      // RAYCAST: Project cursor onto the orbital plane (Y=0)
+      // This makes the planet visually follow the cursor on screen
+      const raycaster = new THREE.Raycaster()
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
+
+      // Intersect with the horizontal plane at Y=0 (orbital plane)
+      const orbitalPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+      const targetPoint = new THREE.Vector3()
+      raycaster.ray.intersectPlane(orbitalPlane, targetPoint)
+
+      if (targetPoint) {
+        // Calculate angle and radius from the intersection point
+        const targetAngle = Math.atan2(targetPoint.z, targetPoint.x)
+        const targetDist = Math.sqrt(targetPoint.x * targetPoint.x + targetPoint.z * targetPoint.z)
+
+        // Clamp radius to valid orbit range
+        const clampedRadius = Math.max(MIN_ORBIT_RADIUS, Math.min(MAX_ORBIT_RADIUS, targetDist))
+
+        targetOrbitRadius.current = clampedRadius
+        targetOrbitAngleRef.current = targetAngle
+      }
     }
-    
+
     updatePlanetPosition(time, delta)
-    
+
     // Report visual position for selection
     if (registerOrbPosition) {
       registerOrbPosition(orb.id, currentPosition.current)
     }
-    
+
     updatePlanetVisuals(time, isLocked, isCandidate)
   })
 
@@ -785,29 +1041,29 @@ function SoundOrb({
     // Smooth orbit radius changes
     const radiusLerpSpeed = isGrabbed ? 0.12 : 0.08
     currentOrbitRadius.current += (targetOrbitRadius.current - currentOrbitRadius.current) * radiusLerpSpeed
-    
+
     if (!isGrabbed) {
       // Natural orbital motion (Kepler-ish: faster when closer)
       const orbitSpeed = orb.orbitSpeed || 1
       const speedMultiplier = Math.pow(5 / currentOrbitRadius.current, 0.5)
       targetOrbitAngleRef.current += orbitSpeed * speedMultiplier * delta * 0.3
     }
-    
+
     // Smooth angle interpolation (prevents sudden jumps)
     const angleLerpSpeed = isGrabbed ? 0.2 : 0.15
     orbitAngleRef.current = lerpAngle(orbitAngleRef.current, targetOrbitAngleRef.current, angleLerpSpeed)
-    
+
     // Calculate orbital position
     const radius = currentOrbitRadius.current
     const angle = orbitAngleRef.current
     const tilt = orb.tiltAngle || 0
-    
+
     targetPosition.current.set(
       Math.cos(angle) * radius,
       Math.sin(tilt) * Math.sin(angle) * radius * 0.1,
       Math.sin(angle) * radius
     )
-    
+
     // Smooth position interpolation - faster when grabbed for responsiveness
     const posLerpSpeed = isGrabbed ? 0.25 : 0.1
     currentPosition.current.lerp(targetPosition.current, posLerpSpeed)
@@ -815,7 +1071,7 @@ function SoundOrb({
 
   function updatePlanetVisuals(time, isLocked, isCandidate) {
     if (!meshRef.current) return
-    
+
     meshRef.current.position.copy(currentPosition.current)
 
     // Planet rotation (self-rotation)
@@ -827,7 +1083,7 @@ function SoundOrb({
     // Scale up when locked or grabbed
     const grabScale = isGrabbed ? 1.3 : (isLocked ? 1.15 : (isCandidate ? 1.08 : 1))
     const pulseScale = orb.active ? 1 + Math.sin(time * 2) * 0.03 * normalizedWeight : 1
-    
+
     const finalScale = (baseSize + weightBonus) * grabScale * pulseScale
     meshRef.current.scale.setScalar(finalScale)
 
@@ -846,7 +1102,7 @@ function SoundOrb({
       candidateRingRef.current.visible = isCandidate && !isGrabbed && orb.active
       candidateRingRef.current.rotation.z = time * 3 // Spin faster to show "loading"
     }
-    
+
     // Update LOCKED indicators (green rings)
     if (lockedRingRef.current) {
       lockedRingRef.current.position.copy(meshRef.current.position)
@@ -859,7 +1115,7 @@ function SoundOrb({
       lockedInnerRingRef.current.visible = isLocked && !isGrabbed && orb.active
       lockedInnerRingRef.current.rotation.z = time * 2
     }
-    
+
     // Update GRABBED indicators
     if (grabbedRingRef.current) {
       grabbedRingRef.current.position.copy(meshRef.current.position)
@@ -942,7 +1198,7 @@ function SoundOrb({
           side={THREE.DoubleSide}
         />
       </mesh>
-      
+
       {/* LOCKED indicator - green ring (ready to grab!) */}
       <mesh ref={lockedRingRef} visible={false}>
         <ringGeometry args={[1.4, 1.6, 32]} />
@@ -962,7 +1218,7 @@ function SoundOrb({
           side={THREE.DoubleSide}
         />
       </mesh>
-      
+
       {/* GRABBED indicator - bright green double ring */}
       <mesh ref={grabbedRingRef} visible={false}>
         <ringGeometry args={[1.45, 1.65, 32]} />
@@ -1066,16 +1322,16 @@ function SoundOrb({
 /**
  * Hand Cursor - Supports multiplayer with player colors
  */
-function HandCursor({ 
-  handPosition, 
-  isPinching, 
-  isFist, 
-  hasGrabbedOrb, 
-  closestOrb, 
-  camera, 
+function HandCursor({
+  handPosition,
+  isPinching,
+  isFist,
+  hasGrabbedOrb,
+  closestOrb,
+  camera,
   cameraMode,
   playerColor,
-  playerId 
+  playerId
 }) {
   const groupRef = useRef()
   const ringsRef = useRef([])
@@ -1084,17 +1340,17 @@ function HandCursor({
     if (!groupRef.current) return
 
     const time = state.clock.elapsedTime
-    
+
     const ndcX = (handPosition.x - 0.5) * 2
     const ndcY = (handPosition.y - 0.5) * 2
-    
+
     const cursorPos = new THREE.Vector3(ndcX, ndcY, 0.5)
     cursorPos.unproject(camera)
-    
+
     const camToPos = cursorPos.clone().sub(camera.position)
     camToPos.normalize().multiplyScalar(10)
     groupRef.current.position.copy(camera.position).add(camToPos)
-    
+
     groupRef.current.lookAt(camera.position)
 
     ringsRef.current.forEach((ring, i) => {
@@ -1106,11 +1362,11 @@ function HandCursor({
 
   // Base color from player, or default
   const baseColor = playerColor || '#00ffff'
-  
+
   // Color based on mode (modulate player color)
   let color = baseColor
   let label = playerId ? playerId.replace('player_', 'P') : 'READY'
-  
+
   if (cameraMode === 'camera') {
     color = '#00ff88'
     label = 'CAM'
@@ -1213,28 +1469,129 @@ function HandCursor({
  * Reference Grid
  */
 /**
+ * CenterCameraButton - Interactive 3D button to reset camera position
+ * Billboard style - always faces camera
+ */
+function CenterCameraButton({ handPosition, isPinching, onCenter, position = [8, 6, 0] }) {
+  const { camera } = useThree()
+  const groupRef = useRef()
+  const [isHovered, setIsHovered] = useState(false)
+  const [wasActivated, setWasActivated] = useState(false)
+  const [pulseScale, setPulseScale] = useState(1)
+
+  useFrame((state) => {
+    // Billboard effect - always face the camera
+    if (groupRef.current) {
+      groupRef.current.lookAt(camera.position)
+    }
+
+    // Pulse animation
+    const pulse = 1 + Math.sin(state.clock.elapsedTime * 3) * 0.05
+    setPulseScale(pulse)
+
+    if (!handPosition?.x) {
+      setIsHovered(false)
+      return
+    }
+
+    // Convert hand position to NDC
+    const ndcX = (handPosition.x - 0.5) * 2
+    const ndcY = (handPosition.y - 0.5) * 2
+
+    // Project button position to screen
+    const buttonPos = new THREE.Vector3(...position)
+    const projected = buttonPos.project(camera.clone())
+
+    const dx = ndcX - projected.x
+    const dy = ndcY - projected.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+
+    const isInRange = dist < 0.25
+    setIsHovered(isInRange)
+
+    // Trigger on pinch while hovering
+    if (isInRange && isPinching && !wasActivated) {
+      setWasActivated(true)
+      onCenter?.()
+      console.log('[CAMERA] Centralizando câmera')
+    }
+
+    if (!isPinching) {
+      setWasActivated(false)
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={position}>
+      {/* Background glow */}
+      <mesh scale={isHovered ? 1.3 : 1.1}>
+        <planeGeometry args={[3.5, 1.2]} />
+        <meshBasicMaterial
+          color={isHovered ? '#00ff88' : '#4488ff'}
+          transparent
+          opacity={0.3}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Main button background */}
+      <mesh scale={pulseScale}>
+        <planeGeometry args={[3, 0.9]} />
+        <meshBasicMaterial
+          color={isHovered ? '#00ff88' : '#224488'}
+          transparent
+          opacity={0.9}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Border */}
+      <mesh>
+        <ringGeometry args={[1.4, 1.5, 32]} />
+        <meshBasicMaterial
+          color={isHovered ? '#00ffaa' : '#6699ff'}
+          transparent
+          opacity={0.8}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Text */}
+      <Text
+        position={[0, 0, 0.01]}
+        fontSize={0.35}
+        color={isHovered ? '#003322' : '#ffffff'}
+        anchorX="center"
+        anchorY="middle"
+        fontWeight="bold"
+      >
+        🎯 CENTRALIZAR
+      </Text>
+
+      {/* Hover indicator */}
+      {isHovered && (
+        <mesh position={[0, 0, -0.01]} scale={1.2}>
+          <ringGeometry args={[1.6, 1.8, 32]} />
+          <meshBasicMaterial color="#00ff88" transparent opacity={0.6} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
+/**
  * Ecliptic Plane - The orbital plane of the solar system
  */
 function ReferenceGrid() {
   return (
     <group rotation={[-Math.PI / 2, 0, 0]}>
       {/* Subtle grid for spatial reference */}
-      <gridHelper 
-        args={[50, 25, '#111133', '#080815']} 
-        rotation={[Math.PI / 2, 0, 0]} 
+      <gridHelper
+        args={[50, 25, '#111133', '#080815']}
+        rotation={[Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
       />
-      
-      {/* Faint ecliptic plane */}
-      <mesh>
-        <circleGeometry args={[25, 64]} />
-        <meshBasicMaterial
-          color="#0a0a1a"
-          transparent
-          opacity={0.3}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      {/* Removed ecliptic plane mesh - was causing visual obstruction */}
     </group>
   )
 }

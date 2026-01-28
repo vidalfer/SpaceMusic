@@ -21,7 +21,7 @@ export function useHandTracking() {
   const [isInitialized, setIsInitialized] = useState(false)
   const [handVelocity, setHandVelocity] = useState({ x: 0, y: 0 })
   const [handSize, setHandSize] = useState(0.25) // For UI feedback
-  
+
   // Refs
   const videoRef = useRef(null)
   const handLandmarkerRef = useRef(null)
@@ -30,13 +30,18 @@ export function useHandTracking() {
   const prevPositionRef = useRef({ x: 0.5, y: 0.5 })
   const streamRef = useRef(null)
   const lastHandSizeRef = useRef(0.25)
-  
+
   // Constants
   const LERP_FACTOR = 0.35
   const LERP_FACTOR_DEPTH = 0.2 // Slower smoothing for depth (more stable)
-  const PINCH_THRESHOLD = 0.08
+  const PINCH_THRESHOLD = 0.10 // Increased threshold - easier to trigger pinch
+  const PINCH_RELEASE_THRESHOLD = 0.14 // Hysteresis - need to open more to release
   const FIST_THRESHOLD = 0.12
-  
+
+  // Pinch state tracking for stability
+  const pinchStateRef = useRef(false)
+  const pinchConfidenceRef = useRef(0) // 0-1 confidence that user is pinching
+
   // Depth detection constants
   const MIN_HAND_SIZE = 0.10  // Hand far from camera
   const MAX_HAND_SIZE = 0.40  // Hand close to camera
@@ -47,15 +52,15 @@ export function useHandTracking() {
 
   const distance3D = (p1, p2) => {
     return Math.sqrt(
-      Math.pow(p1.x - p2.x, 2) + 
-      Math.pow(p1.y - p2.y, 2) + 
+      Math.pow(p1.x - p2.x, 2) +
+      Math.pow(p1.y - p2.y, 2) +
       Math.pow(p1.z - p2.z, 2)
     )
   }
 
   const distance2D = (p1, p2) => {
     return Math.sqrt(
-      Math.pow(p1.x - p2.x, 2) + 
+      Math.pow(p1.x - p2.x, 2) +
       Math.pow(p1.y - p2.y, 2)
     )
   }
@@ -72,17 +77,17 @@ export function useHandTracking() {
     const wrist = hand[0]
     const middleTip = hand[12]
     const handLength = distance2D(wrist, middleTip)
-    
+
     // Method 2: Palm width (more stable, less affected by finger position)
     const indexMCP = hand[5]   // Index finger knuckle
     const pinkyMCP = hand[17]  // Pinky knuckle
     const palmWidth = distance2D(indexMCP, pinkyMCP)
-    
+
     // Method 3: Diagonal of hand bounding box
     const indexTip = hand[8]
     const pinkyTip = hand[20]
     const thumbTip = hand[4]
-    
+
     // Find bounding box
     const allPoints = [wrist, middleTip, indexTip, pinkyTip, thumbTip]
     const xs = allPoints.map(p => p.x)
@@ -92,15 +97,15 @@ export function useHandTracking() {
     const minY = Math.min(...ys)
     const maxY = Math.max(...ys)
     const diagonal = Math.sqrt(Math.pow(maxX - minX, 2) + Math.pow(maxY - minY, 2))
-    
+
     // Combine methods with weights (palm width is most stable)
     const combinedSize = (palmWidth * 2.5 + handLength * 0.8 + diagonal * 0.5) / 3
-    
+
     // Map to 0-1 depth (inverted: big hand = close = 0)
     const normalizedDepth = 1 - Math.min(1, Math.max(0,
       (combinedSize - MIN_HAND_SIZE) / (MAX_HAND_SIZE - MIN_HAND_SIZE)
     ))
-    
+
     return { depth: normalizedDepth, size: combinedSize }
   }
 
@@ -112,14 +117,14 @@ export function useHandTracking() {
   const calculatePinchDepthAdjustment = (hand) => {
     const thumbTip = hand[4]
     const indexTip = hand[8]
-    
+
     const pinchDist = distance2D(thumbTip, indexTip)
-    
+
     // Tight pinch (0.02) = 0 (push forward)
     // Loose pinch (0.10) = 1 (pull back)
     const MIN_PINCH = 0.02
     const MAX_PINCH = 0.10
-    
+
     return Math.min(1, Math.max(0,
       (pinchDist - MIN_PINCH) / (MAX_PINCH - MIN_PINCH)
     ))
@@ -133,49 +138,49 @@ export function useHandTracking() {
     // Finger tips: 4=thumb, 8=index, 12=middle, 16=ring, 20=pinky
     // Finger MCPs (knuckles): 5=index, 9=middle, 13=ring, 17=pinky
     // Finger PIPs (middle joints): 6=index, 10=middle, 14=ring, 18=pinky
-    
+
     const wrist = hand[0]
     const thumbTip = hand[4]
     const indexTip = hand[8]
     const middleTip = hand[12]
     const ringTip = hand[16]
     const pinkyTip = hand[20]
-    
+
     const indexMCP = hand[5]
     const middleMCP = hand[9]
     const ringMCP = hand[13]
     const pinkyMCP = hand[17]
-    
+
     const indexPIP = hand[6]
     const middlePIP = hand[10]
     const ringPIP = hand[14]
     const pinkyPIP = hand[18]
-    
+
     // Method 1: Check if fingertips are closer to palm center than MCPs
     const palmCenter = hand[9] // Middle finger MCP as palm reference
-    
+
     // Method 2: Check if tips are below PIPs (finger curled)
     // In a fist, the tip Y should be similar or higher than PIP Y (curled back)
     const indexCurled = indexTip.y > indexPIP.y - 0.02
     const middleCurled = middleTip.y > middlePIP.y - 0.02
     const ringCurled = ringTip.y > ringPIP.y - 0.02
     const pinkyCurled = pinkyTip.y > pinkyPIP.y - 0.02
-    
+
     // Method 3: Check distance from tips to palm - should be small in a fist
     const indexToPalm = distance3D(indexTip, palmCenter)
     const middleToPalm = distance3D(middleTip, palmCenter)
     const ringToPalm = distance3D(ringTip, palmCenter)
     const pinkyToPalm = distance3D(pinkyTip, palmCenter)
-    
+
     const tipsCloseToPalm = indexToPalm < 0.15 && middleToPalm < 0.12 && ringToPalm < 0.15 && pinkyToPalm < 0.18
-    
+
     // Method 4: All fingertips should be close together in a fist
     const tipsSpread = distance3D(indexTip, pinkyTip)
     const tipsCompact = tipsSpread < 0.15
-    
+
     // Combine methods: need curled fingers AND tips close to palm
     const curledCount = [indexCurled, middleCurled, ringCurled, pinkyCurled].filter(Boolean).length
-    
+
     // Fist = at least 3 fingers curled AND (tips close to palm OR tips compact)
     return curledCount >= 3 && (tipsCloseToPalm || tipsCompact)
   }
@@ -212,22 +217,38 @@ export function useHandTracking() {
     // IMPORTANT: Check fist FIRST before pinch
     // Fist takes priority because when closing hand, thumb and index get close
     const isFistGesture = checkFist(hand)
-    
-    // Only check pinch if NOT a fist
+
+    // Calculate pinch distance for hysteresis logic
     const pinchDistance = distance3D(thumbTip, indexTip)
-    const isPinch = !isFistGesture && pinchDistance < PINCH_THRESHOLD
-    
+
     setIsFist(isFistGesture)
+
+    // Use hysteresis for pinch detection to prevent flickering
+    // If already pinching, require larger distance to release
+    const currentThreshold = pinchStateRef.current ? PINCH_RELEASE_THRESHOLD : PINCH_THRESHOLD
+    const rawPinch = !isFistGesture && pinchDistance < currentThreshold
+
+    // Add confidence smoothing - need sustained pinch to trigger
+    if (rawPinch) {
+      pinchConfidenceRef.current = Math.min(1, pinchConfidenceRef.current + 0.15)
+    } else {
+      pinchConfidenceRef.current = Math.max(0, pinchConfidenceRef.current - 0.1)
+    }
+
+    // Trigger pinch at 50% confidence, release at 30%
+    const isPinch = pinchConfidenceRef.current > (pinchStateRef.current ? 0.3 : 0.5)
+    pinchStateRef.current = isPinch
+
     setIsPinching(isPinch)
 
     // === DEPTH CALCULATION (NEW) ===
     // Calculate depth based on hand size in frame
     const { depth: baseDepth, size: currentHandSize } = calculateHandDepth(hand)
-    
+
     // Smooth the hand size for UI display
     lastHandSizeRef.current = lerp(lastHandSizeRef.current, currentHandSize, 0.1)
     setHandSize(lastHandSizeRef.current)
-    
+
     // If pinching, allow fine-tuning with pinch distance
     let finalDepth = baseDepth
     if (isPinch) {
@@ -237,13 +258,10 @@ export function useHandTracking() {
     }
 
     // Position (X, Y from hand position)
-    const targetX = isPinch 
-      ? (thumbTip.x + indexTip.x) / 2
-      : palmCenter.x
-    
-    const targetY = isPinch 
-      ? (thumbTip.y + indexTip.y) / 2
-      : palmCenter.y
+    // IMPORTANT: Always use palmCenter to avoid cursor jumping when pinching
+    // The pinch point (between thumb and index) is far from palmCenter and causes jumps
+    const targetX = palmCenter.x
+    const targetY = palmCenter.y
 
     // Expand range and mirror/invert
     const expandedX = expandRange(1 - targetX, 0.5, 1.5)
@@ -261,7 +279,7 @@ export function useHandTracking() {
       x: (smoothedPosition.x - prevPositionRef.current.x) * 20,
       y: (smoothedPosition.y - prevPositionRef.current.y) * 20
     }
-    
+
     // Smooth velocity with higher responsiveness
     setHandVelocity(prev => ({
       x: lerp(prev.x, velocity.x, 0.5),
@@ -281,7 +299,7 @@ export function useHandTracking() {
       animationFrameRef.current = requestAnimationFrame(runDetection)
       return
     }
-    
+
     if (videoRef.current.readyState < 2) {
       animationFrameRef.current = requestAnimationFrame(runDetection)
       return
@@ -289,7 +307,7 @@ export function useHandTracking() {
 
     try {
       const results = handLandmarkerRef.current.detectForVideo(
-        videoRef.current, 
+        videoRef.current,
         performance.now()
       )
       processLandmarks(results.landmarks)
@@ -318,7 +336,7 @@ export function useHandTracking() {
     if (handLandmarkerRef.current) {
       try {
         handLandmarkerRef.current.close()
-      } catch (e) {}
+      } catch (e) { }
       handLandmarkerRef.current = null
     }
   }, [])
@@ -329,7 +347,7 @@ export function useHandTracking() {
   const initializeTracking = useCallback(async () => {
     cleanup()
     setIsInitialized(false)
-    
+
     try {
       console.log('[HAND] Initializing Hand Tracking...')
 
@@ -340,7 +358,7 @@ export function useHandTracking() {
           facingMode: 'user'
         }
       })
-      
+
       streamRef.current = stream
       console.log('[HAND] Webcam access granted!')
 
@@ -349,7 +367,7 @@ export function useHandTracking() {
       video.setAttribute('autoplay', 'true')
       video.setAttribute('muted', 'true')
       video.srcObject = stream
-      
+
       await new Promise((resolve, reject) => {
         video.onloadedmetadata = () => {
           video.play()
@@ -365,7 +383,7 @@ export function useHandTracking() {
 
       console.log('[HAND] Loading MediaPipe...')
       const { FilesetResolver, HandLandmarker } = await import('@mediapipe/tasks-vision')
-      
+
       const vision = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
       )
@@ -385,7 +403,7 @@ export function useHandTracking() {
 
       setIsInitialized(true)
       console.log('[HAND] Hand Tracking ready!')
-      
+
       runDetection()
       return true
 
